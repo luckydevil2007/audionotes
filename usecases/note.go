@@ -35,12 +35,14 @@ func NewNoteUseCase(repo *repositories.Repository,
 	}
 }
 
-func (uc *NoteUseCase) Upload(ctx context.Context, name string, data []byte, ownerID int) error {
+func (uc *NoteUseCase) Upload(ctx context.Context, name string, data []byte, ownerID int, lat, lon float64) error {
 	note := &entities.Note{
 		Title: name,
 		Path:  name,
 		Owner: ownerID,
 		Data:  data,
+		Lat:   lat,
+		Lon:   lon,
 	}
 	if err := uc.fileStorage.Save(ctx, note); err != nil {
 		return err

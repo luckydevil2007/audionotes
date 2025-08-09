@@ -1,6 +1,0 @@
-database:
-  host: localhost
-  port: 6432
-  user: user
-  password: user
-  dbname: resizer
