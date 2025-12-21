@@ -43,8 +43,8 @@ func (r *Repository) SelectUserPathes(ctx context.Context, user *entities.User) 
 
 func (r *Repository) SaveNote(ctx context.Context, note *entities.Note) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO notes (note_title, note_path, owner_id, lat, lon) VALUES ($1, $2, $3, $4, $5)`,
-		note.Title, note.Path, note.Owner, note.Lat, note.Lon)
+		`INSERT INTO notes (note_title, note_path, owner_id, lat, lon, excursion_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+		note.Title, note.Path, note.Owner, note.Lat, note.Lon, note.Excursion)
 	return err
 }
 
@@ -90,9 +90,13 @@ func (r *Repository) ClosestNotes(ctx context.Context, lat float64, lon float64,
 	var locations []entities.Note
 	for rows.Next() {
 		var loc entities.Note
-		err := rows.Scan(&loc.ID, &loc.Title, &loc.Owner, &loc.Path, &loc.Lat, &loc.Lon)
+		var tour_id sql.NullInt32
+		err := rows.Scan(&loc.ID, &loc.Title, &loc.Owner, &loc.Path, &loc.Lat, &loc.Lon, &tour_id)
 		if err != nil {
 			return nil, err
+		}
+		if tour_id.Valid {
+			loc.Excursion = int(tour_id.Int32)
 		}
 		locations = append(locations, loc)
 	}
@@ -100,9 +104,23 @@ func (r *Repository) ClosestNotes(ctx context.Context, lat float64, lon float64,
 	return locations, nil
 }
 
-func (r *Repository) OpenPath(ctx context.Context, path *entities.Path) error {
+func (r *Repository) OpenPath(ctx context.Context, path *entities.Path) (p *entities.Path, err error) {
+	var ownerId sql.NullInt64
+	err = r.db.QueryRowContext(ctx,
+		`SELECT path_title, owner_id FROM pathes WHERE ID = $1`, path.ID).Scan(
+		&path.Title, &ownerId)
+
+	if ownerId.Valid {
+		path.Owner = int(ownerId.Int64)
+	}
+	return path, err
+}
+
+func (r *Repository) SavePath(ctx context.Context, path *entities.Path) error {
+	var id int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT title, owner_id FROM notes WHERE ID = $1`, path.ID).Scan(
-		&path.Title, &path.Owner)
+		`INSERT INTO pathes (path_title) VALUES ($1) RETURNING id`,
+		path.Title).Scan(&id)
+	path.ID = id
 	return err
 }

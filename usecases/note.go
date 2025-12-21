@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"errors"
 
 	"github.com/luckydevil2007/audionotes/adapters/repositories"
 	"github.com/luckydevil2007/audionotes/entities"
@@ -35,8 +36,8 @@ func NewNoteUseCase(repo *repositories.Repository,
 	}
 }
 
-func (uc *NoteUseCase) Upload(ctx context.Context, name string, data []byte, ownerID int, lat, lon float64) error {
-	note := &entities.Note{
+func (uc *NoteUseCase) Upload(ctx context.Context, name string, data []byte, ownerID int, lat, lon float64) (note *entities.Note, err error) {
+	note = &entities.Note{
 		Title: name,
 		Path:  name,
 		Owner: ownerID,
@@ -45,10 +46,26 @@ func (uc *NoteUseCase) Upload(ctx context.Context, name string, data []byte, own
 		Lon:   lon,
 	}
 	if err := uc.fileStorage.Save(ctx, note); err != nil {
+		return nil, err
+	}
+
+	if err = uc.repo.SaveNote(ctx, note); err != nil {
+		return nil, err
+	}
+	return note, nil
+
+}
+
+func (uc *NoteUseCase) UploadNote(ctx context.Context, note *entities.Note) (err error) {
+	if err := uc.fileStorage.Save(ctx, note); err != nil {
 		return err
 	}
 
-	return uc.repo.SaveNote(ctx, note)
+	if err = uc.repo.SaveNote(ctx, note); err != nil {
+		return err
+	}
+	return nil
+
 }
 
 func (uc *NoteUseCase) ListUsers(ctx context.Context, user entities.User) (notes []entities.Note, err error) {
@@ -70,17 +87,20 @@ func (uc *NoteUseCase) ListNearest(ctx context.Context, lat float64, lon float64
 	return notes, nil
 }
 
-func (uc *NoteUseCase) Open(ctx context.Context, note *entities.Note) (err error) {
+func (uc *NoteUseCase) Open(ctx context.Context, note *entities.Note) (n *entities.Note, err error) {
 	err = uc.repo.OpenNote(ctx, note)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	uc.fileStorage.Open(ctx, note.Path)
-	return err
+	note.Data, err = uc.fileStorage.Open(ctx, note.Path)
+	return note, err
 }
 
 func (uc *NoteUseCase) OpenNearest(ctx context.Context, lat float64, lon float64, radius float64) (note *entities.Note, err error) {
 	notes, err := uc.ListNearest(ctx, lat, lon, radius)
+	if len(notes) == 0 {
+		return nil, errors.New("No excursions found")
+	}
 	if err != nil {
 		return nil, err
 	}

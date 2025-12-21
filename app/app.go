@@ -41,15 +41,17 @@ func Run() {
 	//s3Storage := s3storage.NewS3Storage("mybucket")
 	authUsecase := usecases.NewAuthUseCase(useRepo)
 	noteUsecase := usecases.NewNoteUseCase(notesRepo, fileStorage)
+	pathUsecase := usecases.NewExcursion(notesRepo, noteUsecase)
 	auth := controllers.NewAuthController(authUsecase)
 	ctx := context.Background()
 	auth.Authenticate(ctx, "user")
 	// нужна ли аутентификация и authUsecase в других контроллерах когда есть AuthMiddleware
-	c, err := controllers.NewTelegramBot(botToken, noteUsecase)
+	c, err := controllers.NewTelegramBot(botToken, noteUsecase, pathUsecase)
 	if err != nil {
 		fmt.Println("Couldn't create bot instance")
 	}
 	err = c.Test(ctx)
+
 	if err != nil {
 		fmt.Println(err.Error())
 		return

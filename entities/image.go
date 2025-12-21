@@ -1,15 +1,16 @@
 package entities
 
 type Note struct {
-	ID    int
-	Title string
-	Path  string
-	Owner int
-	Data  []byte
-	Lat   float64
-	Lon   float64
-	Next  *Note
-	Prev  *Note
+	ID        int
+	Title     string
+	Path      string
+	Owner     int
+	Data      []byte
+	Lat       float64
+	Lon       float64
+	Excursion int
+	Next      *Note
+	Prev      *Note
 }
 
 type Path struct {
