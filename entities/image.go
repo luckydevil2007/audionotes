@@ -19,3 +19,9 @@ type Path struct {
 	Owner int
 	Head  *Note
 }
+
+type Excursion struct {
+	Path *Path
+	Curr *Note
+	Next *Note
+}

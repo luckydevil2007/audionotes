@@ -10,28 +10,9 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/luckydevil2007/audionotes/entities"
+	. "github.com/luckydevil2007/audionotes/entities"
 	"github.com/luckydevil2007/audionotes/usecases"
 )
-
-type State int
-
-const (
-	Nothing State = iota
-	Start
-	ToSendVoice
-	ToSendLocation
-	CreateTour
-	AddTourName
-	FinalizeTour
-	TakeTour
-)
-
-type InternalState struct {
-	State    State
-	Lat, Lon float64
-	RadiusM  int64
-	Set      map[State]State
-}
 
 type TelegramBot struct {
 	bot      *tgbotapi.BotAPI // Экземпляр бота API Telegram
@@ -40,7 +21,7 @@ type TelegramBot struct {
 	//checkAuth *usecases.AuthUseCase
 	note        *usecases.NoteUseCase
 	currentTour *usecases.Excursion
-	state       InternalState
+	state       map[int64]*InternalState
 	//repo      *repositories.Repository
 	//producer  *producers.EventProducer
 }
@@ -50,8 +31,8 @@ func NewTelegramBot(token string, note *usecases.NoteUseCase, tour *usecases.Exc
 	if err != nil {
 		return nil, err
 	}
-	var state InternalState
-	state.Set = make(map[State]State)
+	var state = make(map[int64]*InternalState)
+	//state[0].Set = make(map[State]State)
 	// Возвращаем инициализированный адаптер с ботом и ID чата
 	return &TelegramBot{bot: bot, note: note, currentTour: tour, state: state}, nil
 }
@@ -72,6 +53,16 @@ func (t *TelegramBot) Test(ctx context.Context) error {
 	return nil
 }
 
+func (t *TelegramBot) sendAudioNote(chatId int64, note *Note) (tgbotapi.Message, error) {
+	file := tgbotapi.FileBytes{
+		Name:  note.Title,
+		Bytes: note.Data,
+	}
+
+	audioConfig := tgbotapi.NewVoice(chatId, file)
+	return t.bot.Send(audioConfig)
+}
+
 func (t *TelegramBot) Run(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
 	updates := t.bot.GetUpdatesChan(u)
@@ -79,20 +70,20 @@ func (t *TelegramBot) Run(ctx context.Context) error {
 	//go func() {
 	for update := range updates {
 		if update.CallbackQuery != nil { // Handle button presses
-			t.handleCallback(ctx, update.CallbackQuery)
+			t.handleCallback(ctx, update.CallbackQuery, update.CallbackQuery.Message.Chat.ID)
 		}
 		if update.Message == nil {
 			continue
 		}
-
-		if len(t.state.Set) > 0 {
+		currentState := t.state[update.Message.Chat.ID]
+		if currentState != nil && len(currentState.Set) > 0 {
 			t.onCommand(ctx, update.Message)
 			continue
 		}
 
 		// Handle /start command
 		if update.Message.IsCommand() && update.Message.Command() == "start" {
-			//	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Welcome! Use /newtour to create a tour.")
+			//	msg := tgbotapi.NewMessage(update.Message.From.ID, "Welcome! Use /newtour to create a tour.")
 			t.sendMainMenu(update.Message.Chat.ID)
 		}
 
@@ -100,25 +91,26 @@ func (t *TelegramBot) Run(ctx context.Context) error {
 		if update.Message.Location != nil {
 			lat := float64(update.Message.Location.Latitude)
 			lon := float64(update.Message.Location.Longitude)
-			if t.state.State == ToSendLocation {
-				t.state.Lat = lat
-				t.state.Lon = lon
-				t.state.State = ToSendVoice
+			/*	if currentState.State == ToSendLocation {
+				currentState.Lat = lat
+				currentState.Lon = lon
+				currentState.State = ToSendVoice
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Now record your voice message or send an audio OGG file")
 				t.bot.Send(msg)
 				continue
-			}
+			}*/
 			// Check if near a tour point (pseudo-c
 			note, err := t.note.OpenNearest(ctx, lat, lon, 1.0)
 
 			if err == nil {
+				t.sendAudioNote(update.Message.Chat.ID, note)
 				file := tgbotapi.FileBytes{
 					Name:  note.Title,
 					Bytes: note.Data,
 				}
 
 				audioConfig := tgbotapi.NewVoice(update.Message.Chat.ID, file)
-				//audio := tgbotapi.NewAudioShare(update.Message.Chat.ID, audioURL)
+
 				t.bot.Send(audioConfig)
 			} else {
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, err.Error())
@@ -141,7 +133,8 @@ func (t *TelegramBot) Run(ctx context.Context) error {
 	return err
 }
 
-func (t *TelegramBot) addAudioNote(ctx context.Context, msg *tgbotapi.Message) (note *entities.Note, err error) {
+func (t *TelegramBot) addAudioNote(ctx context.Context, msg *tgbotapi.Message) (note *Note, err error) {
+	currentState := t.state[msg.Chat.ID]
 	if msg.Voice == nil && msg.Audio == nil {
 		panic("This is not an audio note")
 
@@ -162,13 +155,13 @@ func (t *TelegramBot) addAudioNote(ctx context.Context, msg *tgbotapi.Message) (
 	resp, err := http.Get(url)
 	var data []byte
 	data, err = io.ReadAll(resp.Body)
-	note = &entities.Note{
+	note = &Note{
 		Title: strings.Replace(nameTmp, "/", "", -1),
 		Path:  strings.Replace(nameTmp, "/", "", -1),
 		Owner: int(msg.From.ID),
 		Data:  data,
-		Lat:   t.state.Lat,
-		Lon:   t.state.Lon,
+		Lat:   currentState.Lat,
+		Lon:   currentState.Lon,
 	}
 	return note, nil
 }
@@ -183,33 +176,35 @@ func (t *TelegramBot) handleMessage(msg *tgbotapi.Message) {
 }
 
 func (t *TelegramBot) onCommand(ctx context.Context, msg *tgbotapi.Message) {
-	if t.state.Set[CreateTour] != 0 {
+	currentState := t.getState(msg.Chat.ID)
+	if currentState.Set[CreateTour] != 0 {
 		t.createTour(ctx, msg)
 		return
 	}
-	if t.state.Set[TakeTour] != 0 {
+	if currentState.Set[TakeTour] != 0 {
 		t.takeTour(ctx, msg)
 		return
 	}
 }
 
 func (t *TelegramBot) takeTour(ctx context.Context, msg *tgbotapi.Message) error {
-	if t.state.Set[TakeTour] == Start {
-		t.state.Set[TakeTour] = ToSendLocation
+	currentState := t.state[msg.Chat.ID]
+	if currentState.Set[TakeTour] == Start {
+		currentState.Set[TakeTour] = ToSendLocation
 		msg := tgbotapi.NewMessage(msg.Chat.ID, "Choose radius around you")
 		msg.ReplyMarkup = t.getSelectRadiusKeyboard()
 		t.bot.Send(msg)
 		return nil
 	}
-	if t.state.Set[TakeTour] == ToSendLocation {
+	if currentState.Set[TakeTour] == ToSendLocation {
 		if msg.Location == nil {
 			msg := tgbotapi.NewMessage(msg.Chat.ID, "location is not set")
 			t.bot.Send(msg)
 			return nil
 		}
-		t.state.Lat = float64(msg.Location.Latitude)
-		t.state.Lon = float64(msg.Location.Longitude)
-		pathes, err := t.currentTour.Search(ctx, t.state.Lat, t.state.Lon, (float64)(t.state.RadiusM)/1000)
+		currentState.Lat = float64(msg.Location.Latitude)
+		currentState.Lon = float64(msg.Location.Longitude)
+		pathes, err := t.currentTour.Search(ctx, currentState.Lat, currentState.Lon, (float64)(currentState.RadiusM)/1000)
 
 		keys := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow())
@@ -229,70 +224,105 @@ func (t *TelegramBot) takeTour(ctx context.Context, msg *tgbotapi.Message) error
 		return err
 
 	}
+	if currentState.Set[TakeTour] == ToStartPointTour {
+		path, err := t.currentTour.Load(ctx, currentState.CurrentTourID)
+		if err != nil {
+			return err
+		}
+		messageText := path.Head.Title
+		msgLoc := tgbotapi.NewLocation(msg.Chat.ID, path.Head.Lat, path.Head.Lon)
+
+		t.bot.Send(msgLoc)
+		msgText := tgbotapi.NewMessage(msg.Chat.ID, messageText)
+		t.bot.Send(msgText)
+		t.sendAudioNote(msg.Chat.ID, path.Head)
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Play", "takeTour"),
+				tgbotapi.NewInlineKeyboardButtonData("Next", "takeTour"),
+			),
+		)
+		msgKeyboard := tgbotapi.NewMessage(msg.Chat.ID, messageText)
+		msgKeyboard.ReplyMarkup = keyboard
+		t.bot.Send(msgKeyboard)
+	}
+	if currentState.Set[TakeTour] == ToNextPointTour {
+		t.currentTour.NextNote(ctx)
+		t.sendAudioNote(msg.Chat.ID, t.currentTour.Curr)
+	}
+	if currentState.Set[TakeTour] == ToPrevPointTour {
+
+	}
+	if currentState.Set[TakeTour] == ToCurrPointTour {
+		t.sendAudioNote(msg.Chat.ID, t.currentTour.Curr)
+	}
 	return nil
 }
 
 func (t *TelegramBot) createTour(ctx context.Context, msg *tgbotapi.Message) error {
-	if t.state.Set[CreateTour] == AddTourName {
-		path := t.currentTour.CreatePath(ctx, msg.Text, int(msg.Chat.ID))
+	currentState := t.state[msg.Chat.ID]
+	if currentState.Set[CreateTour] == AddTourName {
+		path := t.currentTour.CreatePath(ctx, msg.Text, int(msg.From.ID))
 		err := t.currentTour.Save(ctx, path)
 		if err != nil {
-			delete(t.state.Set, CreateTour)
+			delete(currentState.Set, CreateTour)
 			return err
 		}
-		t.state.Set[CreateTour] = ToSendLocation
+		currentState.Set[CreateTour] = ToSendLocation
 		msgConf := tgbotapi.NewMessage(msg.Chat.ID, "Pick the location")
 		t.bot.Send(msgConf)
 		return nil
 	}
-	if t.state.Set[CreateTour] == ToSendVoice {
+	if currentState.Set[CreateTour] == ToSendVoice {
 		note, err := t.addAudioNote(ctx, msg)
 		if err == nil {
 			t.currentTour.AddAndUpload(ctx, note.Title, note.Data, note.Owner, note.Lat, note.Lon)
-			t.state.Set[CreateTour] = ToSendLocation
+			currentState.Set[CreateTour] = ToSendLocation
 		}
-		t.sendAddNoteToTour(msg.Chat.ID)
+		t.sendAddNoteToTour(msg.From.ID)
 		return err
 	}
-	if t.state.Set[CreateTour] == ToSendLocation {
+	if currentState.Set[CreateTour] == ToSendLocation {
 		if msg.Location == nil {
 			panic("location is not set")
 		}
-		t.state.Lat = float64(msg.Location.Latitude)
-		t.state.Lon = float64(msg.Location.Longitude)
-		t.state.Set[CreateTour] = ToSendVoice
+		currentState.Lat = float64(msg.Location.Latitude)
+		currentState.Lon = float64(msg.Location.Longitude)
+		currentState.Set[CreateTour] = ToSendVoice
 		return nil
 	}
 	msgConf := tgbotapi.NewMessage(msg.Chat.ID, "Type the tour name")
-	t.state.Set[CreateTour] = AddTourName
+	currentState.Set[CreateTour] = AddTourName
 	t.bot.Send(msgConf)
 	return nil
 }
 
 func (t *TelegramBot) finishTour(chatID int64) {
+	currentState := t.state[chatID]
 	err := t.currentTour.Finish( /*ctx*/ )
 	if err != nil {
 		msg := tgbotapi.NewMessage(chatID, "Error! The tour has not been saved")
-		t.state.Set[CreateTour] = Nothing
+		currentState.Set[CreateTour] = Nothing
 		t.bot.Send(msg)
 	}
 	msg := tgbotapi.NewMessage(chatID, "The tour has been saved")
-	t.state.Set[CreateTour] = Nothing
+	currentState.Set[CreateTour] = Nothing
 	t.bot.Send(msg)
 }
 
 func (t *TelegramBot) getSelectRadiusKeyboard() tgbotapi.ReplyKeyboardMarkup {
-	t.state.Set[TakeTour] = ToSendLocation
-	/*return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewKeyboardButtonLocation("500m"),
-			tgbotapi.NewInlineKeyboardButtonData("1km", "1km"),
-			tgbotapi.NewInlineKeyboardButtonData("2km", "2km"),
-			tgbotapi.NewInlineKeyboardButtonData("5km", "5km"),
-			tgbotapi.NewInlineKeyboardButtonData("10km", "10km"),
-			tgbotapi.NewInlineKeyboardButtonData("Map", "Map"),
-		),
-	)*/
+	/*
+		return tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewKeyboardButtonLocation("500m"),
+				tgbotapi.NewInlineKeyboardButtonData("1km", "1km"),
+				tgbotapi.NewInlineKeyboardButtonData("2km", "2km"),
+				tgbotapi.NewInlineKeyboardButtonData("5km", "5km"),
+				tgbotapi.NewInlineKeyboardButtonData("10km", "10km"),
+				tgbotapi.NewInlineKeyboardButtonData("Map", "Map"),
+			),
+		)*/
 	//location500m := tgbotapi.NewInlineKeyboardButtonData("500m","500m")
 	location500m := tgbotapi.KeyboardButton{
 		Text:            "Current Location",
@@ -342,38 +372,62 @@ func (t *TelegramBot) sendAddNoteToTour(chatID int64) {
 	t.bot.Send(msg)
 }
 
-func (t *TelegramBot) handleCallback(ctx context.Context, callback *tgbotapi.CallbackQuery) {
+func (t *TelegramBot) getState(chatID int64) *entities.InternalState {
+	currentState, ok := t.state[chatID]
+	if !ok {
+		currentState = NewInternalState()
+		currentState.Set = map[State]State{Nothing: Nothing}
+		t.state[chatID] = currentState
+	}
+	return t.state[chatID]
+}
+func (t *TelegramBot) handleCallback(ctx context.Context, callback *tgbotapi.CallbackQuery, chatID int64) {
 	// Acknowledge callback
 	callbackCfg := tgbotapi.NewCallback(callback.ID, "")
 	t.bot.Send(callbackCfg)
-
+	// create state if don't have yet
+	currentState := t.getState(chatID)
 	// Handle button press
+	num, err := strconv.Atoi(callback.Data)
+	if err == nil {
+		_, x := currentState.Set[TakeTour]
+		if !x {
+			return
+		}
+		currentState.CurrentTourID = num
+		currentState.Set[TakeTour] = ToStartPointTour
+		t.onCommand(ctx, callback.Message)
+		return
+	}
 	switch callback.Data {
 	case "takeTour":
-		t.state.Set[TakeTour] = Start
-		t.state.RadiusM = 1000
+		currentState.Set[TakeTour] = Start
+		currentState.RadiusM = 1000
+
 		t.onCommand(ctx, callback.Message)
 	case "addNote":
-		t.state.State = ToSendLocation
+		currentState.State = ToSendLocation
+
 		msg := tgbotapi.NewMessage(callback.Message.Chat.ID, "Send the item location first. Hower or press clip button")
 		t.bot.Send(msg)
 	case "newTour":
-		t.state.Set[CreateTour] = Start
+		currentState.Set[CreateTour] = Start
+
 		t.onCommand(ctx, callback.Message)
 	case "finishTour":
 		t.finishTour(callback.Message.Chat.ID)
 	case "help":
 		t.sendHelp(callback.Message.Chat.ID)
 	case "500m":
-		t.state.RadiusM = 500
+		currentState.RadiusM = 500
 	case "1km":
-		t.state.RadiusM = 1000
+		currentState.RadiusM = 1000
 	case "10km":
-		t.state.RadiusM = 10000
+		currentState.RadiusM = 10000
 	case "5km":
-		t.state.RadiusM = 5000
+		currentState.RadiusM = 5000
 	case "2km":
-		t.state.RadiusM = 2000
+		currentState.RadiusM = 2000
 	}
 }
 

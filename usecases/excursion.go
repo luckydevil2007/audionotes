@@ -18,15 +18,14 @@ type INoteService interface {
 }
 
 type Excursion struct {
-	path        *entities.Path
-	curr        *entities.Note
-	next        *entities.Note
+	entities.Excursion
 	repo        *repositories.Repository
 	noteService INoteService
 }
 
 func NewExcursion(repo *repositories.Repository, noteService INoteService) *Excursion {
-	return &Excursion{path: nil, curr: nil, next: nil, repo: repo, noteService: noteService}
+	return &Excursion{Excursion: entities.Excursion{Path: nil, Curr: nil, Next: nil},
+		repo: repo, noteService: noteService}
 }
 
 func (e *Excursion) CreatePath(ctx context.Context, name string, ownerID int) *entities.Path {
@@ -40,15 +39,15 @@ func (e *Excursion) CreatePath(ctx context.Context, name string, ownerID int) *e
 		Path:  path.Title,
 	}
 	path.Head = note
-	e.curr = path.Head
-	e.path = path
-	return e.path
+	e.Excursion.Curr = path.Head
+	e.Path = path
+	return e.Path
 }
 
 func (e *Excursion) AddNote(ctx context.Context, note *entities.Note) error {
-	note.Excursion = e.path.ID
-	note.Prev = e.curr
-	e.curr.Next = note
+	note.Excursion = e.Path.ID
+	note.Prev = e.Curr
+	e.Curr.Next = note
 	return nil
 }
 
@@ -60,7 +59,7 @@ func (e *Excursion) AddAndUpload(ctx context.Context, title string, data []byte,
 		Data:      data,
 		Lat:       lat,
 		Lon:       lon,
-		Excursion: e.path.ID,
+		Excursion: e.Path.ID,
 	}
 	err := e.noteService.UploadNote(ctx, note)
 	if err != nil {
@@ -76,7 +75,7 @@ func (e *Excursion) Load(ctx context.Context, id int) (path *entities.Path, err 
 }
 
 func (e *Excursion) NextNote(ctx context.Context) (note *entities.Note, err error) {
-	return e.noteService.Open(ctx, e.next)
+	return e.noteService.Open(ctx, e.Next)
 
 }
 
@@ -85,14 +84,14 @@ func (e *Excursion) Search(ctx context.Context, lat, lon float64, radius float64
 	if err != nil {
 		return nil, err
 	}
-	var excursionIds []int
+	excursionIds := make(map[int]int)
 	for n := range len(notes) {
-		excursionIds = append(excursionIds, notes[n].Excursion)
+		excursionIds[notes[n].Excursion] = 0
 	}
 
 	for i := range excursionIds {
-		p, err := e.Load(ctx, excursionIds[i])
-		if err == nil {
+		p, err := e.Load(ctx, i)
+		if err == nil && p != nil {
 			pathes = append(pathes, *p)
 		}
 	}
@@ -109,8 +108,8 @@ func (e *Excursion) Remove(ctx context.Context) error {
 }
 
 func (e *Excursion) Finish( /*ctx context.Context*/ ) error {
-	e.path = nil
-	e.curr = nil
-	e.next = nil
+	e.Path = nil
+	e.Curr = nil
+	e.Next = nil
 	return nil
 }

@@ -106,12 +106,43 @@ func (r *Repository) ClosestNotes(ctx context.Context, lat float64, lon float64,
 
 func (r *Repository) OpenPath(ctx context.Context, path *entities.Path) (p *entities.Path, err error) {
 	var ownerId sql.NullInt64
+
 	err = r.db.QueryRowContext(ctx,
 		`SELECT path_title, owner_id FROM pathes WHERE ID = $1`, path.ID).Scan(
 		&path.Title, &ownerId)
 
 	if ownerId.Valid {
 		path.Owner = int(ownerId.Int64)
+	}
+
+	rows, err := r.db.Query(
+		`SELECT * FROM notes WHERE excursion_id = $1`, path.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var notes []entities.Note
+	for rows.Next() {
+		var n entities.Note
+		var tour_id sql.NullInt32
+		err := rows.Scan(&n.ID, &n.Title, &n.Owner, &n.Path, &n.Lat, &n.Lon, &tour_id)
+		if err != nil {
+			return nil, err
+		}
+		if tour_id.Valid {
+			n.Excursion = int(tour_id.Int32)
+		}
+		notes = append(notes, n)
+	}
+	if rows.Err() != nil || len(notes) == 0 {
+		return nil, rows.Err()
+	}
+	path.Head = &notes[0]
+	cur := path.Head
+	for i := 1; i < len(notes); i++ {
+		cur.Next = &notes[1]
 	}
 	return path, err
 }

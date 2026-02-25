@@ -49,6 +49,7 @@ func Run() {
 	c, err := controllers.NewTelegramBot(botToken, noteUsecase, pathUsecase)
 	if err != nil {
 		fmt.Println("Couldn't create bot instance")
+		return
 	}
 	err = c.Test(ctx)
 
