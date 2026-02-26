@@ -56,9 +56,13 @@ func (r *Repository) DeleteNote(ctx context.Context, id int) error {
 }
 
 func (r *Repository) OpenNote(ctx context.Context, note *entities.Note) error {
+	var tour_id sql.NullInt32
 	err := r.db.QueryRowContext(ctx,
-		`SELECT title, path, owner_id FROM notes WHERE ID = $1`, note.ID).Scan(
-		&note.Title, &note.Path, &note.Owner)
+		`SELECT * FROM notes WHERE ID = $1`, note.ID).Scan(
+		&note.ID, &note.Title, &note.Owner, &note.Path, &note.Lat, &note.Lon, &tour_id)
+	if tour_id.Valid {
+		note.Excursion = int(tour_id.Int32)
+	}
 	return err
 }
 

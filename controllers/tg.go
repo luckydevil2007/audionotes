@@ -229,23 +229,8 @@ func (t *TelegramBot) takeTour(ctx context.Context, msg *tgbotapi.Message) error
 		if err != nil {
 			return err
 		}
-		messageText := path.Head.Title
-		msgLoc := tgbotapi.NewLocation(msg.Chat.ID, path.Head.Lat, path.Head.Lon)
+		t.sendCurrentNote(ctx, msg, path.Head)
 
-		t.bot.Send(msgLoc)
-		msgText := tgbotapi.NewMessage(msg.Chat.ID, messageText)
-		t.bot.Send(msgText)
-		t.sendAudioNote(msg.Chat.ID, path.Head)
-
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Play", "takeTour"),
-				tgbotapi.NewInlineKeyboardButtonData("Next", "takeTour"),
-			),
-		)
-		msgKeyboard := tgbotapi.NewMessage(msg.Chat.ID, messageText)
-		msgKeyboard.ReplyMarkup = keyboard
-		t.bot.Send(msgKeyboard)
 	}
 	if currentState.Set[TakeTour] == ToNextPointTour {
 		t.currentTour.NextNote(ctx)
@@ -258,6 +243,43 @@ func (t *TelegramBot) takeTour(ctx context.Context, msg *tgbotapi.Message) error
 		t.sendAudioNote(msg.Chat.ID, t.currentTour.Curr)
 	}
 	return nil
+}
+
+func (t *TelegramBot) playCurrentNote(ctx context.Context, msg *tgbotapi.Message) error {
+	note, err := t.note.Open(ctx, t.currentTour.Curr)
+	if err == nil {
+		t.sendAudioNote(msg.Chat.ID, note)
+	}
+	return nil
+}
+
+func (t *TelegramBot) sendCurrentNote(ctx context.Context, msg *tgbotapi.Message, note *entities.Note) error {
+	messageText := note.Title
+	msgLoc := tgbotapi.NewLocation(msg.Chat.ID, note.Lat, note.Lon)
+
+	t.bot.Send(msgLoc)
+	msgText := tgbotapi.NewMessage(msg.Chat.ID, messageText)
+	t.bot.Send(msgText)
+	t.sendAudioNote(msg.Chat.ID, note)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Play", "playCurrentNote"),
+			tgbotapi.NewInlineKeyboardButtonData("Next", "toNextNote"),
+		),
+	)
+	msgKeyboard := tgbotapi.NewMessage(msg.Chat.ID, messageText)
+	msgKeyboard.ReplyMarkup = keyboard
+	t.bot.Send(msgKeyboard)
+	return nil
+}
+
+func (t *TelegramBot) toNextNote(ctx context.Context, msg *tgbotapi.Message) error {
+	if t.currentTour.HasNext() {
+		return nil
+	}
+	t.currentTour.NextNote(ctx)
+	return t.sendCurrentNote(ctx, msg, t.currentTour.Curr)
 }
 
 func (t *TelegramBot) createTour(ctx context.Context, msg *tgbotapi.Message) error {
@@ -428,6 +450,10 @@ func (t *TelegramBot) handleCallback(ctx context.Context, callback *tgbotapi.Cal
 		currentState.RadiusM = 5000
 	case "2km":
 		currentState.RadiusM = 2000
+	case "playCurrentNote":
+		t.playCurrentNote(ctx, callback.Message)
+	case "toNextNote":
+		t.toNextNote(ctx, callback.Message)
 	}
 }
 

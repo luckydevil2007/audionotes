@@ -71,11 +71,23 @@ func (e *Excursion) AddAndUpload(ctx context.Context, title string, data []byte,
 
 func (e *Excursion) Load(ctx context.Context, id int) (path *entities.Path, err error) {
 	path = &entities.Path{ID: id}
-	return e.repo.OpenPath(ctx, path)
+	e.Path, err = e.repo.OpenPath(ctx, path)
+	if e.Path != nil {
+		e.Curr = e.Path.Head
+	}
+	return e.Path, err
+}
+
+func (e *Excursion) HasNext() bool {
+	return e.Curr != nil && e.Curr.Next != nil
 }
 
 func (e *Excursion) NextNote(ctx context.Context) (note *entities.Note, err error) {
-	return e.noteService.Open(ctx, e.Next)
+	if !e.HasNext() {
+		return nil, nil
+	}
+	e.Curr = e.Curr.Next
+	return e.noteService.Open(ctx, e.Curr)
 
 }
 
